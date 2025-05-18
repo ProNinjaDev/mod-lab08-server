@@ -5,6 +5,35 @@ namespace TPProj
 {
     class Program
     {
+        public static double Factorial(int number)
+        {
+            if (number < 0) return -1;
+            if (number == 0) return 1;
+            double result = 1;
+            for (int i = 1; i <= number; i++)
+            {
+                result *= i;
+            }
+            return result;
+        }
+        public static double CalculateP0(double rho, int n)
+        {
+            if (rho < 0 || n < 0) return -1;
+
+            double sum = 0;
+            for (int i = 0; i <= n; i++)
+            {
+                sum += Math.Pow(rho, i) / Factorial(i);
+            }
+            if (sum == 0) return -1;
+            return 1.0 / sum;
+        }
+        public static double CalculateFailureProbability(double rho, int n, double p0)
+        {
+             if (rho < 0 || n < 0 || p0 < 0) return -1;
+            return (Math.Pow(rho, n) / Factorial(n)) * p0;
+        }
+
         static void Main()
         {
             int numberOfChannels = 5;
@@ -35,7 +64,8 @@ namespace TPProj
                 }
             }
 
-            Thread.Sleep(1000);
+            int finalWaitMs = 1000;
+            Thread.Sleep(finalWaitMs);
 
             Console.WriteLine("Всего заявок: {0}", server.requestCount);
             Console.WriteLine("Обработано заявок: {0}", server.processedCount);
@@ -43,15 +73,56 @@ namespace TPProj
 
             if (server.requestCount > 0)
             {
-                double failureProb = (double)server.rejectedCount / server.requestCount;
-                double relativeThroughput = (double)server.processedCount / server.requestCount;
-                double absoluteThroughput = lambda * relativeThroughput;
-                double avgNumOccupiedChannels = relativeThroughput * (lambda / mu);
+                double failureProbExp = (double)server.rejectedCount / server.requestCount;
+                double relativeThroughputExp = (double)server.processedCount / server.requestCount;
+                double absoluteThroughputExp = lambda * relativeThroughputExp; 
+                double avgNumOccupiedChannelsExp = relativeThroughputExp * (lambda / mu); 
 
-                Console.WriteLine($"Вероятность отказа: {failureProb:P4}");
-                Console.WriteLine($"Относительная пропускная способность: {relativeThroughput:P4}");
-                Console.WriteLine($"Абсолютная пропускная способность: {absoluteThroughput:F4} заявок/сек");
-                Console.WriteLine($"Среднее число занятых каналов: {avgNumOccupiedChannels:F4}");
+                Console.WriteLine($"Вероятность отказа: {failureProbExp:P4}");
+                Console.WriteLine($"Относительная пропускная способность: {relativeThroughputExp:P4}");
+                Console.WriteLine($"Абсолютная пропускная способность: {absoluteThroughputExp:F4} заявок/сек");
+                Console.WriteLine($"Среднее число занятых каналов: {avgNumOccupiedChannelsExp:F4}");
+            }
+            else
+            {
+                Console.WriteLine("Заявок не было подано");
+            }
+
+            Console.WriteLine("\nТеоретические расчеты");
+            if (mu > 0)
+            {
+                double rho = lambda / mu;
+                Console.WriteLine($"Приведенная интенсивность потока: {rho:F4}");
+
+                if (rho >= 0)
+                {
+                    double p0_teor = CalculateP0(rho, numberOfChannels);
+                    if (p0_teor >= 0)
+                    {
+                        Console.WriteLine($"Вероятность простоя системы: {p0_teor:P4}");
+
+                        double failureProbTeor = CalculateFailureProbability(rho, numberOfChannels, p0_teor);
+                        Console.WriteLine($"Вероятность отказа: {failureProbTeor:P4}");
+
+                        double relativeThroughputTeor = 1.0 - failureProbTeor;
+                        Console.WriteLine($"Относительная пропускная способность: {relativeThroughputTeor:P4}");
+
+                        double absoluteThroughputTeor = lambda * relativeThroughputTeor;
+                        Console.WriteLine($"Абсолютная пропускная способность: {absoluteThroughputTeor:F4} заявок/сек");
+
+                        double avgNumOccupiedChannelsTeor = rho * relativeThroughputTeor;
+                        if (avgNumOccupiedChannelsTeor > numberOfChannels) avgNumOccupiedChannelsTeor = numberOfChannels * relativeThroughputTeor;
+                        Console.WriteLine($"Среднее число занятых каналов: {avgNumOccupiedChannelsTeor:F4}");
+                    }
+                }
+                else
+                {
+                     Console.WriteLine("Rho < 0");
+                }
+            }
+            else
+            {
+                Console.WriteLine("Интенсивность обслуживания mu <= 0");
             }
         }
     }
