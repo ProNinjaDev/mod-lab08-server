@@ -17,10 +17,16 @@ namespace TPProj
             Console.WriteLine($"Интервал поступления заявок: {clientSendInterval}");
             Console.WriteLine($"Время обработки заявки: {serverProcessingTime}");
 
+            double lambda = 1000.0 / clientSendInterval;
+            double mu = 1000.0 / serverProcessingTime;
+
+            Console.WriteLine($"Lambda: {lambda}");
+            Console.WriteLine($"Mu: {mu}");
+
             Server server = new Server(numberOfChannels, serverProcessingTime);
             Client client = new Client(server);
 
-            for (int id = 1; id <= 100; id++)
+            for (int id = 1; id <= totalRequests; id++)
             {
                 client.send(id);
                 if (clientSendInterval > 0)
@@ -34,6 +40,19 @@ namespace TPProj
             Console.WriteLine("Всего заявок: {0}", server.requestCount);
             Console.WriteLine("Обработано заявок: {0}", server.processedCount);
             Console.WriteLine("Отклонено заявок: {0}", server.rejectedCount);
+
+            if (server.requestCount > 0)
+            {
+                double failureProb = (double)server.rejectedCount / server.requestCount;
+                double relativeThroughput = (double)server.processedCount / server.requestCount;
+                double absoluteThroughput = lambda * relativeThroughput;
+                double avgNumOccupiedChannels = relativeThroughput * (lambda / mu);
+
+                Console.WriteLine($"Вероятность отказа: {failureProb:P4}");
+                Console.WriteLine($"Относительная пропускная способность: {relativeThroughput:P4}");
+                Console.WriteLine($"Абсолютная пропускная способность: {absoluteThroughput:F4} заявок/сек");
+                Console.WriteLine($"Среднее число занятых каналов: {avgNumOccupiedChannels:F4}");
+            }
         }
     }
 
