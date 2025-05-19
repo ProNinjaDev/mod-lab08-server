@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Threading;
+using System.IO;
 
 namespace TPProj
 {
@@ -38,138 +39,119 @@ namespace TPProj
         {
             int numberOfChannels = 5;
             int totalRequests = 100;
-            int clientSendInterval = 50;
             int serverProcessingTime = 500;
             int sampleIntervalMs = 20;
 
-            Console.WriteLine($"Количество каналов: {numberOfChannels}");
-            Console.WriteLine($"Всего заявок для симуляции: {totalRequests}");
-            Console.WriteLine($"Интервал поступления заявок: {clientSendInterval}");
-            Console.WriteLine($"Время обработки заявки: {serverProcessingTime}");
+            int[] clientSendIntervals = { 25, 33, 40, 50, 67, 80, 100, 125, 167, 250, 500 };
+            string csvFilePath = "simulation_results.csv";
 
-            double lambda = 1000.0 / clientSendInterval;
-            double mu = 1000.0 / serverProcessingTime;
+            Console.WriteLine($"Запуск серии экспериментов для построения графиков...");
+            Console.WriteLine($"Результаты будут сохранены в файл: {Path.GetFullPath(csvFilePath)}");
 
-            Console.WriteLine($"Lambda: {lambda}");
-            Console.WriteLine($"Mu: {mu}");
-
-            Server server = new Server(numberOfChannels, serverProcessingTime);
-            Client client = new Client(server);
-
-            long idleStateObservations = 0;
-            long totalStateObservations = 0;
-
-            for (int id = 1; id <= totalRequests; id++)
+            try
             {
-                client.send(id);
-                if (clientSendInterval > 0)
+                using (StreamWriter sw = new StreamWriter(csvFilePath))
                 {
+                    sw.WriteLine("clientSendIntervalMs;Lambda;P0_Эксп;P_Отк_Эксп;Q_Эксп;A_Эксп;k_Эксп;P0_Теор;P_Отк_Теор;Q_Теор;A_Теор;k_Теор");
 
-                    int elapsedInInterval = 0;
-                    while (elapsedInInterval < clientSendInterval)
+                    foreach (int currentClientSendInterval in clientSendIntervals)
                     {
-                        int sleepDuration = Math.Min(sampleIntervalMs, clientSendInterval - elapsedInInterval);
-                        Thread.Sleep(sleepDuration);
-                        elapsedInInterval += sleepDuration;
+                        Console.WriteLine($"Обработка эксперимента для clientSendInterval = {currentClientSendInterval} мс...");
 
-                        totalStateObservations++;
-                        if (server.ActiveChannels == 0)
+                        double lambda = (currentClientSendInterval > 0) ? 1000.0 / currentClientSendInterval : double.PositiveInfinity;
+                        double mu = (serverProcessingTime > 0) ? 1000.0 / serverProcessingTime : double.PositiveInfinity;
+
+                        Server server = new Server(numberOfChannels, serverProcessingTime);
+                        Client client = new Client(server);
+
+                        long idleStateObservations = 0;
+                        long totalStateObservations = 0;
+
+                        for (int id = 1; id <= totalRequests; id++)
                         {
-                            idleStateObservations++;
+                            client.send(id);
+                            if (currentClientSendInterval > 0)
+                            {
+                                int elapsedInInterval = 0;
+                                while (elapsedInInterval < currentClientSendInterval)
+                                {
+                                    int sleepDuration = Math.Min(sampleIntervalMs, currentClientSendInterval - elapsedInInterval);
+                                    Thread.Sleep(sleepDuration);
+                                    elapsedInInterval += sleepDuration;
+
+                                    totalStateObservations++;
+                                    if (server.ActiveChannels == 0)
+                                    {
+                                        idleStateObservations++;
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                totalStateObservations++;
+                                if (server.ActiveChannels == 0)
+                                {
+                                    idleStateObservations++;
+                                }
+                            }
                         }
+
+                        int finalWaitMs = 1000;
+                        int elapsedInFinalWait = 0;
+                        while (elapsedInFinalWait < finalWaitMs)
+                        {
+                            int sleepDuration = Math.Min(sampleIntervalMs, finalWaitMs - elapsedInFinalWait);
+                            Thread.Sleep(sleepDuration);
+                            elapsedInFinalWait += sleepDuration;
+
+                            totalStateObservations++;
+                            if (server.ActiveChannels == 0)
+                            {
+                                idleStateObservations++;
+                            }
+                        }
+                        
+                        double p0Exp = 0, failureProbExp = 0, relativeThroughputExp = 0, absoluteThroughputExp = 0, avgNumOccupiedChannelsExp = 0;
+                        if (server.requestCount > 0 && totalStateObservations > 0)
+                        {
+                            p0Exp = (double)idleStateObservations / totalStateObservations;
+                            failureProbExp = (double)server.rejectedCount / server.requestCount;
+                            relativeThroughputExp = (double)server.processedCount / server.requestCount;
+                            absoluteThroughputExp = lambda * relativeThroughputExp; 
+                            avgNumOccupiedChannelsExp = relativeThroughputExp * (lambda / mu); 
+                        }
+
+                        double p0_teor = 0, failureProbTeor = 0, relativeThroughputTeor = 0, absoluteThroughputTeor = 0, avgNumOccupiedChannelsTeor = 0;
+                        double rho = -1;
+                        if (mu > 0)
+                        {
+                            rho = lambda / mu;
+                            if (rho >= 0)
+                            {
+                                p0_teor = CalculateP0(rho, numberOfChannels);
+                                if (p0_teor >= 0)
+                                {
+                                    failureProbTeor = CalculateFailureProbability(rho, numberOfChannels, p0_teor);
+                                    relativeThroughputTeor = 1.0 - failureProbTeor;
+                                    absoluteThroughputTeor = lambda * relativeThroughputTeor;
+                                    avgNumOccupiedChannelsTeor = rho * relativeThroughputTeor;
+                                }
+                            }
+                        }
+
+                        string csvLine = $"{currentClientSendInterval};{lambda:F4};{p0Exp:F4};{failureProbExp:F4};{relativeThroughputExp:F4};{absoluteThroughputExp:F4};{avgNumOccupiedChannelsExp:F4};{p0_teor:F4};{failureProbTeor:F4};{relativeThroughputTeor:F4};{absoluteThroughputTeor:F4};{avgNumOccupiedChannelsTeor:F4}".Replace(",", ".");
+                        sw.WriteLine(csvLine);
+                        
                     }
-                }
-                else
-                {
-                     totalStateObservations++;
-                     if (server.ActiveChannels == 0)
-                     {
-                         idleStateObservations++;
-                     }
+                    Console.WriteLine("\nДанные успешно записаны в файл.");
                 }
             }
-
-            int finalWaitMs = 1000;
-
-            int elapsedInFinalWait = 0;
-            while (elapsedInFinalWait < finalWaitMs)
+            catch (Exception ex)
             {
-                int sleepDuration = Math.Min(sampleIntervalMs, finalWaitMs - elapsedInFinalWait);
-                Thread.Sleep(sleepDuration);
-                elapsedInFinalWait += sleepDuration;
-
-                totalStateObservations++;
-                if (server.ActiveChannels == 0)
-                {
-                    idleStateObservations++;
-                }
+                Console.WriteLine($"Ошибка при записи в CSV файл: {ex.Message}");
             }
-
-            Console.WriteLine("Всего заявок: {0}", server.requestCount);
-            Console.WriteLine("Обработано заявок: {0}", server.processedCount);
-            Console.WriteLine("Отклонено заявок: {0}", server.rejectedCount);
-            Console.WriteLine($"Общее число наблюдений за состоянием сервера: {totalStateObservations}");
-            Console.WriteLine($"Число наблюдений состояния простоя: {idleStateObservations}");
-
-            if (server.requestCount > 0)
-            {
-                double p0Exp = 0;
-                if (totalStateObservations > 0)
-                {
-                    p0Exp = (double)idleStateObservations / totalStateObservations;
-                }
-                Console.WriteLine($"Вероятность простоя системы (эксп. P0): {p0Exp:P4}");
-                
-                double failureProbExp = (double)server.rejectedCount / server.requestCount;
-                double relativeThroughputExp = (double)server.processedCount / server.requestCount;
-                double absoluteThroughputExp = lambda * relativeThroughputExp; 
-                double avgNumOccupiedChannelsExp = relativeThroughputExp * (lambda / mu); 
-
-                Console.WriteLine($"Вероятность отказа: {failureProbExp:P4}");
-                Console.WriteLine($"Относительная пропускная способность: {relativeThroughputExp:P4}");
-                Console.WriteLine($"Абсолютная пропускная способность: {absoluteThroughputExp:F4} заявок/сек");
-                Console.WriteLine($"Среднее число занятых каналов: {avgNumOccupiedChannelsExp:F4}");
-            }
-            else
-            {
-                Console.WriteLine("Заявок не было подано");
-            }
-
-            Console.WriteLine("\nТеоретические расчеты");
-            if (mu > 0)
-            {
-                double rho = lambda / mu;
-                Console.WriteLine($"Приведенная интенсивность потока: {rho:F4}");
-
-                if (rho >= 0)
-                {
-                    double p0_teor = CalculateP0(rho, numberOfChannels);
-                    if (p0_teor >= 0)
-                    {
-                        Console.WriteLine($"Вероятность простоя системы: {p0_teor:P4}");
-
-                        double failureProbTeor = CalculateFailureProbability(rho, numberOfChannels, p0_teor);
-                        Console.WriteLine($"Вероятность отказа: {failureProbTeor:P4}");
-
-                        double relativeThroughputTeor = 1.0 - failureProbTeor;
-                        Console.WriteLine($"Относительная пропускная способность: {relativeThroughputTeor:P4}");
-
-                        double absoluteThroughputTeor = lambda * relativeThroughputTeor;
-                        Console.WriteLine($"Абсолютная пропускная способность: {absoluteThroughputTeor:F4} заявок/сек");
-
-                        double avgNumOccupiedChannelsTeor = rho * relativeThroughputTeor;
-                        Console.WriteLine($"Среднее число занятых каналов: {avgNumOccupiedChannelsTeor:F4}");
-                    }
-                }
-                else
-                {
-                     Console.WriteLine("Rho < 0");
-                }
-            }
-            else
-            {
-                Console.WriteLine("Интенсивность обслуживания mu <= 0");
-            }
+            
+            Console.WriteLine("\nСерия экспериментов завершена");
         }
     }
 
