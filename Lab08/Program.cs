@@ -40,6 +40,7 @@ namespace TPProj
             int totalRequests = 100;
             int clientSendInterval = 50;
             int serverProcessingTime = 500;
+            int sampleIntervalMs = 20;
 
             Console.WriteLine($"Количество каналов: {numberOfChannels}");
             Console.WriteLine($"Всего заявок для симуляции: {totalRequests}");
@@ -55,24 +56,70 @@ namespace TPProj
             Server server = new Server(numberOfChannels, serverProcessingTime);
             Client client = new Client(server);
 
+            long idleStateObservations = 0;
+            long totalStateObservations = 0;
+
             for (int id = 1; id <= totalRequests; id++)
             {
                 client.send(id);
                 if (clientSendInterval > 0)
                 {
-                    Thread.Sleep(clientSendInterval);
+
+                    int elapsedInInterval = 0;
+                    while (elapsedInInterval < clientSendInterval)
+                    {
+                        int sleepDuration = Math.Min(sampleIntervalMs, clientSendInterval - elapsedInInterval);
+                        Thread.Sleep(sleepDuration);
+                        elapsedInInterval += sleepDuration;
+
+                        totalStateObservations++;
+                        if (server.ActiveChannels == 0)
+                        {
+                            idleStateObservations++;
+                        }
+                    }
+                }
+                else
+                {
+                     totalStateObservations++;
+                     if (server.ActiveChannels == 0)
+                     {
+                         idleStateObservations++;
+                     }
                 }
             }
 
             int finalWaitMs = 1000;
-            Thread.Sleep(finalWaitMs);
+
+            int elapsedInFinalWait = 0;
+            while (elapsedInFinalWait < finalWaitMs)
+            {
+                int sleepDuration = Math.Min(sampleIntervalMs, finalWaitMs - elapsedInFinalWait);
+                Thread.Sleep(sleepDuration);
+                elapsedInFinalWait += sleepDuration;
+
+                totalStateObservations++;
+                if (server.ActiveChannels == 0)
+                {
+                    idleStateObservations++;
+                }
+            }
 
             Console.WriteLine("Всего заявок: {0}", server.requestCount);
             Console.WriteLine("Обработано заявок: {0}", server.processedCount);
             Console.WriteLine("Отклонено заявок: {0}", server.rejectedCount);
+            Console.WriteLine($"Общее число наблюдений за состоянием сервера: {totalStateObservations}");
+            Console.WriteLine($"Число наблюдений состояния простоя: {idleStateObservations}");
 
             if (server.requestCount > 0)
             {
+                double p0Exp = 0;
+                if (totalStateObservations > 0)
+                {
+                    p0Exp = (double)idleStateObservations / totalStateObservations;
+                }
+                Console.WriteLine($"Вероятность простоя системы (эксп. P0): {p0Exp:P4}");
+                
                 double failureProbExp = (double)server.rejectedCount / server.requestCount;
                 double relativeThroughputExp = (double)server.processedCount / server.requestCount;
                 double absoluteThroughputExp = lambda * relativeThroughputExp; 
@@ -111,7 +158,6 @@ namespace TPProj
                         Console.WriteLine($"Абсолютная пропускная способность: {absoluteThroughputTeor:F4} заявок/сек");
 
                         double avgNumOccupiedChannelsTeor = rho * relativeThroughputTeor;
-                        if (avgNumOccupiedChannelsTeor > numberOfChannels) avgNumOccupiedChannelsTeor = numberOfChannels * relativeThroughputTeor;
                         Console.WriteLine($"Среднее число занятых каналов: {avgNumOccupiedChannelsTeor:F4}");
                     }
                 }
@@ -142,12 +188,14 @@ namespace TPProj
         public int rejectedCount = 0;
         private int poolSize;
         private int processingTime;
+        public int ActiveChannels { get; private set; } = 0;
 
         public Server(int n, int procTime)
         {
             poolSize = n;
             processingTime = procTime;
             pool = new PoolRecord[poolSize];
+            ActiveChannels = 0;
         }
         public void proc(object sender, procEventArgs e)
         {
@@ -160,6 +208,7 @@ namespace TPProj
                     if (!pool[i].in_use)
                     {
                         pool[i].in_use = true;
+                        ActiveChannels++;
                         pool[i].thread = new Thread(new ParameterizedThreadStart(Answer));
                         pool[i].thread.Start(new Tuple<int, int, int>(e.id, i, processingTime));
                         processedCount++;
@@ -189,6 +238,7 @@ namespace TPProj
             lock(threadLock)
             {
                 pool[poolIndex].in_use = false;
+                ActiveChannels--;
                 // Console.WriteLine("Поток {0} освободился", poolIndex);
             }
         }
